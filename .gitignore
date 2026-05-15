@@ -8,3 +8,4 @@ terraform/terraform.zip
 terraform/terraform.tfstate
 terraform/terraform.tfstate.backup
 terraform/.terraform/
+terraform/.terraform/
