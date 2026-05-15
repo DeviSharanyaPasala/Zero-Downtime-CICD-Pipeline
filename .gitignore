@@ -1,0 +1,10 @@
+aws/
+awscliv2.zip
+terraform.zip
+terraform-bin/
+terraform/aws/
+terraform/awscliv2.zip
+terraform/terraform.zip
+terraform/terraform.tfstate
+terraform/terraform.tfstate.backup
+terraform/.terraform/
