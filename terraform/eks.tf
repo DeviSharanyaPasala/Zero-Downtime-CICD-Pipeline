@@ -6,7 +6,7 @@ module "eks" {
   version = "20.8.4"
 
   cluster_name    = "${var.project_name}-cluster"
-  cluster_version = "1.29"
+  cluster_version = "1.32"
 
   vpc_id                         = module.vpc.vpc_id
   subnet_ids                     = module.vpc.private_subnets
@@ -16,7 +16,7 @@ module "eks" {
   eks_managed_node_groups = {
     default = {
       name           = "default-node-group"
-      instance_types = ["t3.medium"]   # 2 vCPU, 4GB RAM — good for dev/demo
+      instance_types = ["t3.micro"]   # 2 vCPU, 4GB RAM — good for dev/demo
 
       min_size     = 1
       max_size     = 3
