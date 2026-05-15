@@ -1,4 +1,4 @@
-# zero-downtime-cicd
+# Zero-Downtime-CICD
 
 CI/CD pipeline that deploys a Flask app to AWS EKS with zero downtime.
 Every push to main runs tests, builds a Docker image, pushes to ECR,
