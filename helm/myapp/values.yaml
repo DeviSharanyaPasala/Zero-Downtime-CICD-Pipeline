@@ -1,0 +1,53 @@
+# Default values — overridden by GitHub Actions at deploy time
+
+replicaCount: 2
+
+image:
+  repository: ""        # Filled in by CI: <account_id>.dkr.ecr.us-east-1.amazonaws.com/zero-downtime-cicd
+  tag: "latest"
+  pullPolicy: Always
+
+service:
+  type: LoadBalancer
+  port: 80
+  targetPort: 5000
+
+# Blue/Green deployment strategy
+# Zero downtime: new pods must be healthy before old ones are removed
+deployment:
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1          # Spin up 1 extra pod before killing old ones
+      maxUnavailable: 0    # Never kill a pod until replacement is healthy
+
+# Health check endpoints
+probes:
+  liveness:
+    path: /health
+    initialDelaySeconds: 10
+    periodSeconds: 10
+  readiness:
+    path: /ready
+    initialDelaySeconds: 5
+    periodSeconds: 5
+
+# Resource limits
+resources:
+  requests:
+    cpu: "100m"
+    memory: "128Mi"
+  limits:
+    cpu: "250m"
+    memory: "256Mi"
+
+# Environment variables injected into the container
+env:
+  APP_ENV: "production"
+  APP_VERSION: "1.0.0"
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
