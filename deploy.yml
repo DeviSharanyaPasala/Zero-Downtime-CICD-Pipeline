@@ -1,0 +1,139 @@
+name: Zero-Downtime CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main       # Deploy on every merge to main
+  pull_request:
+    branches:
+      - main       # Run tests only on PRs (no deploy)
+
+env:
+  AWS_REGION:       us-east-1
+  ECR_REPO:         ${{ secrets.AWS_ECR_REPO }}        # e.g. 123456789.dkr.ecr.us-east-1.amazonaws.com/zero-downtime-cicd
+  EKS_CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}    # e.g. zero-downtime-cicd-cluster
+  HELM_RELEASE:     myapp
+  HELM_CHART_PATH:  ./helm/myapp
+
+jobs:
+  # ──────────────────────────────────────────────
+  # JOB 1: Run tests
+  # ──────────────────────────────────────────────
+  test:
+    name: Run Tests
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          pip install -r app/requirements.txt
+          pip install pytest
+
+      - name: Run tests
+        run: pytest tests/ -v
+        # If no tests folder yet, this will be skipped gracefully
+
+  # ──────────────────────────────────────────────
+  # JOB 2: Build Docker image and push to ECR
+  # Only runs on push to main (not on PRs)
+  # ──────────────────────────────────────────────
+  build-and-push:
+    name: Build & Push to ECR
+    runs-on: ubuntu-latest
+    needs: test
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    outputs:
+      image_tag: ${{ steps.meta.outputs.tag }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set image tag (git SHA for traceability)
+        id: meta
+        run: echo "tag=${GITHUB_SHA::8}" >> $GITHUB_OUTPUT
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Log in to Amazon ECR
+        id: ecr-login
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --tag ${{ env.ECR_REPO }}:${{ steps.meta.outputs.tag }} \
+            --tag ${{ env.ECR_REPO }}:latest \
+            .
+
+      - name: Push to ECR
+        run: |
+          docker push ${{ env.ECR_REPO }}:${{ steps.meta.outputs.tag }}
+          docker push ${{ env.ECR_REPO }}:latest
+
+  # ──────────────────────────────────────────────
+  # JOB 3: Deploy to EKS with Helm
+  # Rolling update — zero downtime guaranteed by
+  # maxUnavailable: 0 in values.yaml
+  # ──────────────────────────────────────────────
+  deploy:
+    name: Deploy to EKS
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            ${{ env.AWS_REGION }}
+
+      - name: Update kubeconfig for EKS
+        run: |
+          aws eks update-kubeconfig \
+            --region ${{ env.AWS_REGION }} \
+            --name ${{ env.EKS_CLUSTER_NAME }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v4
+        with:
+          version: "3.14.0"
+
+      - name: Deploy with Helm (rolling update — zero downtime)
+        run: |
+          helm upgrade --install ${{ env.HELM_RELEASE }} ${{ env.HELM_CHART_PATH }} \
+            --set image.repository=${{ env.ECR_REPO }} \
+            --set image.tag=${{ needs.build-and-push.outputs.image_tag }} \
+            --wait \
+            --timeout 3m \
+            --atomic   # Auto-rollback if deploy fails
+
+      - name: Verify deployment
+        run: |
+          kubectl rollout status deployment/${{ env.HELM_RELEASE }} --timeout=2m
+          echo "✅ Deployment successful — version ${{ needs.build-and-push.outputs.image_tag }} is live"
+
+      - name: Print app URL
+        run: |
+          echo "🌐 App URL:"
+          kubectl get svc ${{ env.HELM_RELEASE }}-service \
+            -o jsonpath='{.status.loadBalancer.ingress[0].hostname}'
